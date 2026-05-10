@@ -52,8 +52,27 @@
     .label { font-size: 12px; color: #5f6368; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
     .value { font-size: 18px; font-weight: 600; word-break: break-all; }
     .small { font-size: 13px; color: #5f6368; margin-top: 6px; }
-    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
-    #reader video { border-radius: 8px; width: 100% !important; height: auto !important; }
+
+    /* CRITICAL: explicit dimensions so the video element has somewhere to render. */
+    #reader {
+      width: 100%;
+      min-height: 320px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #000;
+      position: relative;
+    }
+    #reader > div { width: 100% !important; }
+    #reader video {
+      display: block !important;
+      width: 100% !important;
+      height: auto !important;
+      max-height: 70vh;
+      border-radius: 8px;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+
     .hidden { display: none !important; }
     .status { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
     .status.success { background: #e6f4ea; color: #137333; }
@@ -159,23 +178,17 @@
     let currentTeacher = null;
     let docs = [];
     let creds = { u: null, p: null };
+    let videoWatchdog = null;
 
-    // Show config banner if API_URL hasn't been set
     if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
       document.getElementById('configBanner').classList.remove('hidden');
     }
 
-    // Restore session
     try {
       const saved = sessionStorage.getItem('creds');
       if (saved) { creds = JSON.parse(saved); showMain(); }
     } catch (e) {}
 
-    /**
-     * POSTs JSON to the Apps Script /exec URL.
-     * Uses Content-Type: text/plain to skip CORS preflight (which Apps Script
-     * cannot handle). The body is still JSON-stringified.
-     */
     async function api(action, payload) {
       if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
         throw new Error('API_URL is not configured in index.html');
@@ -226,83 +239,65 @@
       document.getElementById('mainScreen').classList.remove('hidden');
     }
 
-    /**
-     * Pre-flight camera permission check. Surfaces clear errors instead of
-     * letting html5-qrcode fail silently.
-     */
-    async function ensureCameraPermission() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('This browser does not support camera access. Use Chrome on Android.');
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-          audio: false
-        });
-        stream.getTracks().forEach(t => t.stop());
-        return true;
-      } catch (err) {
-        const name = err && err.name ? err.name : 'Error';
-        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-          throw new Error('Camera permission denied. Tap the lock icon next to the URL → Permissions → allow Camera, then reload.');
-        }
-        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-          throw new Error('No camera found on this device.');
-        }
-        if (name === 'NotReadableError' || name === 'TrackStartError') {
-          throw new Error('Camera is in use by another app. Close other camera apps and try again.');
-        }
-        if (name === 'SecurityError') {
-          throw new Error('Camera blocked by browser security policy. The page must be served over HTTPS.');
-        }
-        throw new Error(name + ': ' + (err.message || 'Could not access camera'));
-      }
-    }
-
     async function startScan(mode) {
       scanMode = mode;
       document.getElementById('scanModeLabel').textContent =
         mode === 'teacher' ? 'Scanning Teacher ID' : 'Scanning Document';
       document.getElementById('scanControls').classList.add('hidden');
       document.getElementById('scannerArea').classList.remove('hidden');
-      showStatus('Requesting camera…', 'info');
+      showStatus('Starting camera…', 'info');
 
-      try {
-        await ensureCameraPermission();
-      } catch (err) {
-        showStatus(err.message, 'error');
-        document.getElementById('scanControls').classList.remove('hidden');
-        document.getElementById('scannerArea').classList.add('hidden');
-        return;
-      }
+      // Clear any previous content in #reader
+      document.getElementById('reader').innerHTML = '';
 
-      const qrboxFn = (vw, vh) => {
-        const minEdge = Math.min(vw, vh);
-        const size = Math.max(180, Math.floor(minEdge * 0.75));
-        return { width: size, height: size };
-      };
-
+      // Simpler config: no aspectRatio constraint (was failing silently on
+      // some Android cameras), simpler qrbox.
       scanner = new Html5Qrcode('reader', { verbose: false });
+
+      // Watchdog: if no <video> element appears within 3s, surface an error
+      // instead of leaving the user staring at a blank box.
+      videoWatchdog = setTimeout(() => {
+        const vid = document.querySelector('#reader video');
+        if (!vid) {
+          showStatus('Camera stream not rendering. Try Cancel and Scan again. If this persists, check Chrome → Settings → Site settings → Camera.', 'error');
+        } else if (vid.readyState < 2) {
+          showStatus('Camera stream stuck loading. Tap Cancel and try again.', 'warn');
+        }
+      }, 3000);
+
       try {
         await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: qrboxFn, aspectRatio: 1.7777 },
+          { facingMode: { ideal: 'environment' } },
+          { fps: 10, qrbox: 250 },
           onScanSuccess,
           () => {} // ignore per-frame decode errors
         );
+        // Force the video element visible in case any CSS is overriding
+        const vid = document.querySelector('#reader video');
+        if (vid) {
+          vid.setAttribute('playsinline', 'true');
+          vid.setAttribute('muted', 'true');
+          vid.muted = true;
+          vid.style.display = 'block';
+          vid.style.width = '100%';
+          try { await vid.play(); } catch (e) { /* autoplay should already be on */ }
+        }
         showStatus('Point the camera at the QR code', 'info');
       } catch (err) {
+        clearTimeout(videoWatchdog);
         showStatus('Failed to start scanner: ' + (err.message || err), 'error');
         stopScan();
       }
     }
 
     function stopScan() {
+      clearTimeout(videoWatchdog);
       const s = scanner;
       scanner = null;
       if (s) {
         s.stop().then(() => { try { s.clear(); } catch (e) {} }).catch(() => {});
       }
+      document.getElementById('reader').innerHTML = '';
       document.getElementById('scanControls').classList.remove('hidden');
       document.getElementById('scannerArea').classList.add('hidden');
     }
@@ -382,7 +377,7 @@
       const el = document.getElementById('status');
       el.innerHTML = '<div class="status ' + type + '">' + msg + '</div>';
       clearTimeout(showStatus._t);
-      showStatus._t = setTimeout(() => { el.innerHTML = ''; }, 4000);
+      showStatus._t = setTimeout(() => { el.innerHTML = ''; }, 5000);
     }
   </script>
 </body>
