@@ -4,7 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>QR Scanner</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <!-- Load html5-qrcode with CDN fallback. Tries unpkg first, falls back to
+       jsDelivr, and shows a visible error banner if both fail. -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
+          onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';"></script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -53,7 +58,9 @@
     .value { font-size: 18px; font-weight: 600; word-break: break-all; }
     .small { font-size: 13px; color: #5f6368; margin-top: 6px; }
 
-    /* CRITICAL: explicit dimensions so the video element has somewhere to render. */
+    /* Reader container needs explicit height so the injected video element
+       has somewhere to render. Without this, the container can be 0px tall
+       and the video never appears. */
     #reader {
       width: 100%;
       min-height: 320px;
@@ -104,22 +111,35 @@
       border-radius: 3px;
       font-size: 12px;
     }
+    .lib-error {
+      background: #fce8e6;
+      color: #c5221f;
+      padding: 12px;
+      margin: 12px 0;
+      border-radius: 8px;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
+
+    <!-- Library-load failure banner. Shown only if BOTH CDNs fail. -->
+    <div id="libErr" class="lib-error hidden">
+      QR scanner library failed to load. Check your internet connection and reload.
+    </div>
 
     <!-- LOGIN -->
     <div id="loginScreen">
       <h1>Sign in</h1>
       <div id="configBanner" class="config-banner hidden">
         <strong>Setup needed.</strong> Open <code>index.html</code> and replace
-        <code>_URL</code> at the top of the script with your Apps Script
+        <code>API_URL</code> at the top of the script with your Apps Script
         web app /exec URL.
       </div>
       <div class="card">
         <div class="label">Username</div>
-        <input type="text" id="username" autocomplete="username" autoctalize="off">
+        <input type="text" id="username" autocomplete="username" autocapitalize="off">
         <div class="label">Password</div>
         <input type="password" id="password" autocomplete="current-password">
         <button onclick="doLogin()">Sign in</button>
@@ -166,6 +186,17 @@
   </div>
 
   <script>
+    // Detect if html5-qrcode failed to load from both CDNs and surface a banner.
+    if (typeof Html5Qrcode === 'undefined') {
+      window.addEventListener('load', () => {
+        if (typeof Html5Qrcode === 'undefined') {
+          document.getElementById('libErr').classList.remove('hidden');
+        }
+      });
+    }
+  </script>
+
+  <script>
     // ============================================================
     // CONFIGURATION — paste your Apps Script /exec URL between the quotes.
     // It looks like: https://script.google.com/macros/s/AKfycb.../exec
@@ -180,15 +211,22 @@
     let creds = { u: null, p: null };
     let videoWatchdog = null;
 
+    // Show config banner if API_URL hasn't been set
     if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
       document.getElementById('configBanner').classList.remove('hidden');
     }
 
+    // Restore session
     try {
       const saved = sessionStorage.getItem('creds');
       if (saved) { creds = JSON.parse(saved); showMain(); }
     } catch (e) {}
 
+    /**
+     * POSTs JSON to the Apps Script /exec URL.
+     * Uses Content-Type: text/plain to skip CORS preflight (which Apps Script
+     * cannot handle). The body is still JSON-stringified.
+     */
     async function api(action, payload) {
       if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
         throw new Error('API_URL is not configured in index.html');
@@ -240,6 +278,12 @@
     }
 
     async function startScan(mode) {
+      // Safety check — if the library didn't load, fail clearly instead of crashing.
+      if (typeof Html5Qrcode === 'undefined') {
+        showStatus('Scanner library failed to load. Check your internet connection and reload the page.', 'error');
+        return;
+      }
+
       scanMode = mode;
       document.getElementById('scanModeLabel').textContent =
         mode === 'teacher' ? 'Scanning Teacher ID' : 'Scanning Document';
@@ -250,12 +294,8 @@
       // Clear any previous content in #reader
       document.getElementById('reader').innerHTML = '';
 
-      // Simpler config: no aspectRatio constraint (was failing silently on
-      // some Android cameras), simpler qrbox.
-      scanner = new Html5Qrcode('reader', { verbose: false });
-
-     // Smarter watchdog: also catches the "video element exists but stream
-      // never started or is producing 0x0 frames" case (common on laptops).
+      // Watchdog: catches three failure modes — no video element, video element
+      // stuck loading, or video element with 0x0 frames.
       videoWatchdog = setTimeout(() => {
         const vid = document.querySelector('#reader video');
         if (!vid) {
@@ -267,14 +307,17 @@
         }
       }, 3500);
 
+      scanner = new Html5Qrcode('reader', { verbose: false });
+
       try {
         // Enumerate cameras and pick one with a real label, falling back to
-        // facingMode only if enumeration finds nothing useful.
+        // facingMode only if enumeration finds nothing useful. This handles
+        // the laptop case where facingMode often picks a virtual camera.
         let cameraConfig = { facingMode: { ideal: 'environment' } };
         try {
           const cams = await Html5Qrcode.getCameras();
           if (cams && cams.length > 0) {
-            // Prefer a back-facing camera by label, else the first real camera
+            // Prefer back-facing camera by label, else first non-virtual camera
             const back = cams.find(c => /back|rear|environment/i.test(c.label));
             const real = cams.find(c => c.label && !/obs|virtual|snap|nvidia|broadcast/i.test(c.label));
             const chosen = back || real || cams[0];
@@ -292,7 +335,8 @@
           onScanSuccess,
           () => {} // ignore per-frame decode errors
         );
-        // Force the video element visible in case any CSS is overriding
+
+        // Force the video element visible in case any CSS is overriding it
         const vid = document.querySelector('#reader video');
         if (vid) {
           vid.setAttribute('playsinline', 'true');
