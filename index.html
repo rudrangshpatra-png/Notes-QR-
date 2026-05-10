@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>QR Scanner</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -114,12 +114,12 @@
       <h1>Sign in</h1>
       <div id="configBanner" class="config-banner hidden">
         <strong>Setup needed.</strong> Open <code>index.html</code> and replace
-        <code>API_URL</code> at the top of the script with your Apps Script
+        <code>_URL</code> at the top of the script with your Apps Script
         web app /exec URL.
       </div>
       <div class="card">
         <div class="label">Username</div>
-        <input type="text" id="username" autocomplete="username" autocapitalize="off">
+        <input type="text" id="username" autocomplete="username" autoctalize="off">
         <div class="label">Password</div>
         <input type="password" id="password" autocomplete="current-password">
         <button onclick="doLogin()">Sign in</button>
@@ -170,7 +170,7 @@
     // CONFIGURATION — paste your Apps Script /exec URL between the quotes.
     // It looks like: https://script.google.com/macros/s/AKfycb.../exec
     // ============================================================
-    const API_URL = 'https://script.google.com/macros/s/AKfycbzX6gPKNjbKyL_wjHBtjLU9D2wl6KtxYZPPy16MObY6AzlQS4109FYdemU0lW81lzSN/exec';
+    const _URL = 'https://script.google.com/macros/s/AKfycbzX6gPKNjbKyL_wjHBtjLU9D2wl6KtxYZPPy16MObY6AzlQS4109FYdemU0lW81lzSN/exec';
     // ============================================================
 
     let scanner = null;
