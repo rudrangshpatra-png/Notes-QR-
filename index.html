@@ -203,6 +203,14 @@
     const API_URL = 'https://script.google.com/macros/s/AKfycbzX6gPKNjbKyL_wjHBtjLU9D2wl6KtxYZPPy16MObY6AzlQS4109FYdemU0lW81lzSN/exec';
     // ============================================================
 
+    // Teacher IDs start with "HYT" followed by digits, optional hyphens, and
+    // optional letters (e.g. HYT18-156, HYT2025-A12). Adjust this regex if
+    // your IDs follow a different format.
+    const TEACHER_ID_PATTERN = /^HYT[A-Z0-9-]+$/i;
+    function isTeacherId(value) {
+      return TEACHER_ID_PATTERN.test(String(value).trim());
+    }
+
     let scanner = null;
     let scanMode = null;
     let currentTeacher = null;
@@ -378,6 +386,16 @@
       const value = (decodedText || '').trim();
       stopScan();
       if (!value) return;
+
+      // Validate: teacher IDs must match the pattern; document IDs must NOT.
+      if (mode === 'teacher' && !isTeacherId(value)) {
+        showStatus('"' + value + '" is not a teacher ID. Teacher IDs start with HYT.', 'error');
+        return;
+      }
+      if (mode === 'doc' && isTeacherId(value)) {
+        showStatus('"' + value + '" looks like a teacher ID, not a document. Tap "Done — Next Teacher" first.', 'error');
+        return;
+      }
 
       if (mode === 'teacher') {
         currentTeacher = value;
