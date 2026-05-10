@@ -206,7 +206,7 @@
     // Teacher IDs start with "HYT" followed by digits, optional hyphens, and
     // optional letters (e.g. HYT18-156, HYT2025-A12). Adjust this regex if
     // your IDs follow a different format.
-    const TEACHER_ID_PATTERN = /^HYT[A-Z0-9-]+$/i;
+    const TEACHER_ID_PATTERN = /^\d{3}$/;
     function isTeacherId(value) {
       return TEACHER_ID_PATTERN.test(String(value).trim());
     }
