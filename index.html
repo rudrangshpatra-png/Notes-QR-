@@ -254,20 +254,40 @@
       // some Android cameras), simpler qrbox.
       scanner = new Html5Qrcode('reader', { verbose: false });
 
-      // Watchdog: if no <video> element appears within 3s, surface an error
-      // instead of leaving the user staring at a blank box.
+     // Smarter watchdog: also catches the "video element exists but stream
+      // never started or is producing 0x0 frames" case (common on laptops).
       videoWatchdog = setTimeout(() => {
         const vid = document.querySelector('#reader video');
         if (!vid) {
-          showStatus('Camera stream not rendering. Try Cancel and Scan again. If this persists, check Chrome → Settings → Site settings → Camera.', 'error');
+          showStatus('No video element. Try Cancel and Scan again, or check Chrome site settings.', 'error');
         } else if (vid.readyState < 2) {
-          showStatus('Camera stream stuck loading. Tap Cancel and try again.', 'warn');
+          showStatus('Camera connected but no video frames. The camera may be in use by another app (Zoom, Teams, OBS). Close it and try again.', 'warn');
+        } else if (vid.videoWidth === 0 || vid.videoHeight === 0) {
+          showStatus('Camera connected but producing 0×0 frames. Try a different camera or restart the browser.', 'warn');
         }
-      }, 3000);
+      }, 3500);
 
       try {
+        // Enumerate cameras and pick one with a real label, falling back to
+        // facingMode only if enumeration finds nothing useful.
+        let cameraConfig = { facingMode: { ideal: 'environment' } };
+        try {
+          const cams = await Html5Qrcode.getCameras();
+          if (cams && cams.length > 0) {
+            // Prefer a back-facing camera by label, else the first real camera
+            const back = cams.find(c => /back|rear|environment/i.test(c.label));
+            const real = cams.find(c => c.label && !/obs|virtual|snap|nvidia|broadcast/i.test(c.label));
+            const chosen = back || real || cams[0];
+            cameraConfig = chosen.id;
+            console.log('Available cameras:', cams.map(c => c.label));
+            console.log('Using camera:', chosen.label);
+          }
+        } catch (e) {
+          console.warn('Camera enumeration failed, falling back to facingMode:', e);
+        }
+
         await scanner.start(
-          { facingMode: { ideal: 'environment' } },
+          cameraConfig,
           { fps: 10, qrbox: 250 },
           onScanSuccess,
           () => {} // ignore per-frame decode errors
