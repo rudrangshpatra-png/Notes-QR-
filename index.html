@@ -161,8 +161,7 @@
 
       <div class="card">
         <div id="scanControls">
-          <button id="scanTeacherBtn" onclick="startScan('teacher')">Scan Teacher ID</button>
-          <button id="scanDocBtn" onclick="startScan('doc')" disabled>Scan Document</button>
+          <button id="scanBtn" onclick="startScanAuto()">Scan Teacher ID</button>
           <button class="secondary" onclick="resetTeacher()">Done — Next Teacher</button>
         </div>
 
@@ -275,6 +274,14 @@
     function showMain() {
       document.getElementById('loginScreen').classList.add('hidden');
       document.getElementById('mainScreen').classList.remove('hidden');
+    }
+
+    /**
+     * Single Scan button. If no teacher is loaded, the next scan becomes the
+     * teacher. Once a teacher is loaded, every scan is treated as a document.
+     */
+    function startScanAuto() {
+      startScan(currentTeacher ? 'doc' : 'teacher');
     }
 
     async function startScan(mode) {
@@ -413,7 +420,8 @@
 
     function updateTeacherUI() {
       document.getElementById('teacherIdDisplay').textContent = currentTeacher || '— none —';
-      document.getElementById('scanDocBtn').disabled = !currentTeacher;
+      // Single button — label switches based on whether a teacher is loaded
+      document.getElementById('scanBtn').textContent = currentTeacher ? 'Scan Document' : 'Scan Teacher ID';
       document.getElementById('docsCard').classList.toggle('hidden', !currentTeacher);
     }
 
