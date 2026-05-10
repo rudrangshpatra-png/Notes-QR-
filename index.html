@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>QR Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #1f1f1f;
+      min-height: 100vh;
+      padding: 16px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .container { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 20px; margin-bottom: 16px; font-weight: 600; }
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background: #1a73e8;
+      color: white;
+      cursor: pointer;
+      font-weight: 500;
+      -webkit-appearance: none;
+    }
+    button:disabled { background: #c4c4c4; cursor: not-allowed; }
+    button.secondary { background: #5f6368; }
+    button.danger { background: #d93025; }
+    button + button { margin-top: 8px; }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #dcdcdc;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      -webkit-appearance: none;
+    }
+    .label { font-size: 12px; color: #5f6368; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+    .value { font-size: 18px; font-weight: 600; word-break: break-all; }
+    .small { font-size: 13px; color: #5f6368; margin-top: 6px; }
+    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+    #reader video { border-radius: 8px; width: 100% !important; height: auto !important; }
+    .hidden { display: none !important; }
+    .status { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+    .status.success { background: #e6f4ea; color: #137333; }
+    .status.error { background: #fce8e6; color: #c5221f; }
+    .status.warn { background: #fef7e0; color: #b06000; }
+    .status.info { background: #e8f0fe; color: #1967d2; }
+    .doc-list { list-style: none; margin-top: 8px; }
+    .doc-list li {
+      padding: 10px 12px;
+      background: #f1f3f4;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-size: 14px;
+      word-break: break-all;
+    }
+    .doc-list li::before { content: "\2713  "; color: #137333; font-weight: bold; }
+    .config-banner {
+      background: #fef7e0;
+      color: #b06000;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .config-banner code {
+      background: rgba(0,0,0,0.06);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- LOGIN -->
+    <div id="loginScreen">
+      <h1>Sign in</h1>
+      <div id="configBanner" class="config-banner hidden">
+        <strong>Setup needed.</strong> Open <code>index.html</code> and replace
+        <code>API_URL</code> at the top of the script with your Apps Script
+        web app /exec URL.
+      </div>
+      <div class="card">
+        <div class="label">Username</div>
+        <input type="text" id="username" autocomplete="username" autocapitalize="off">
+        <div class="label">Password</div>
+        <input type="password" id="password" autocomplete="current-password">
+        <button onclick="doLogin()">Sign in</button>
+        <div id="loginStatus" style="margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div id="mainScreen" class="hidden">
+      <h1>Scanner</h1>
+
+      <div class="card">
+        <div class="label">Current Teacher</div>
+        <div class="value" id="teacherIdDisplay">— none —</div>
+        <div class="small" id="docCount"></div>
+      </div>
+
+      <div id="status"></div>
+
+      <div class="card">
+        <div id="scanControls">
+          <button id="scanTeacherBtn" onclick="startScan('teacher')">Scan Teacher ID</button>
+          <button id="scanDocBtn" onclick="startScan('doc')" disabled>Scan Document</button>
+          <button class="secondary" onclick="resetTeacher()">Done — Next Teacher</button>
+        </div>
+
+        <div id="scannerArea" class="hidden">
+          <div class="label" id="scanModeLabel" style="margin-bottom:8px;"></div>
+          <div id="reader"></div>
+          <button class="danger" style="margin-top:10px;" onclick="stopScan()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="card hidden" id="docsCard">
+        <div class="label">Documents scanned</div>
+        <ul class="doc-list" id="docsList"></ul>
+      </div>
+
+      <div class="card">
+        <button class="secondary" onclick="logout()">Sign out</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ============================================================
+    // CONFIGURATION — paste your Apps Script /exec URL between the quotes.
+    // It looks like: https://script.google.com/macros/s/AKfycb.../exec
+    // ============================================================
+    const API_URL = 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE';
+    // ============================================================
+
+    let scanner = null;
+    let scanMode = null;
+    let currentTeacher = null;
+    let docs = [];
+    let creds = { u: null, p: null };
+
+    // Show config banner if API_URL hasn't been set
+    if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
+      document.getElementById('configBanner').classList.remove('hidden');
+    }
+
+    // Restore session
+    try {
+      const saved = sessionStorage.getItem('creds');
+      if (saved) { creds = JSON.parse(saved); showMain(); }
+    } catch (e) {}
+
+    /**
+     * POSTs JSON to the Apps Script /exec URL.
+     * Uses Content-Type: text/plain to skip CORS preflight (which Apps Script
+     * cannot handle). The body is still JSON-stringified.
+     */
+    async function api(action, payload) {
+      if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
+        throw new Error('API_URL is not configured in index.html');
+      }
+      const body = JSON.stringify(Object.assign({ action: action }, payload || {}));
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: body,
+        redirect: 'follow'
+      });
+      if (!res.ok) throw new Error('Network error: ' + res.status);
+      const data = await res.json();
+      if (data.ok === false) throw new Error(data.error || 'Unknown error');
+      return data;
+    }
+
+    async function doLogin() {
+      const u = document.getElementById('username').value.trim();
+      const p = document.getElementById('password').value;
+      const statusEl = document.getElementById('loginStatus');
+      if (!u || !p) {
+        statusEl.innerHTML = '<div class="status error">Enter username and password</div>';
+        return;
+      }
+      statusEl.innerHTML = '<div class="status info">Checking…</div>';
+      try {
+        const result = await api('login', { username: u, password: p });
+        if (result.ok) {
+          creds = { u: u, p: p };
+          try { sessionStorage.setItem('creds', JSON.stringify(creds)); } catch (e) {}
+          showMain();
+        } else {
+          statusEl.innerHTML = '<div class="status error">Invalid credentials</div>';
+        }
+      } catch (err) {
+        statusEl.innerHTML = '<div class="status error">' + (err.message || err) + '</div>';
+      }
+    }
+
+    function logout() {
+      try { sessionStorage.removeItem('creds'); } catch (e) {}
+      location.reload();
+    }
+
+    function showMain() {
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('mainScreen').classList.remove('hidden');
+    }
+
+    /**
+     * Pre-flight camera permission check. Surfaces clear errors instead of
+     * letting html5-qrcode fail silently.
+     */
+    async function ensureCameraPermission() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('This browser does not support camera access. Use Chrome on Android.');
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        stream.getTracks().forEach(t => t.stop());
+        return true;
+      } catch (err) {
+        const name = err && err.name ? err.name : 'Error';
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          throw new Error('Camera permission denied. Tap the lock icon next to the URL → Permissions → allow Camera, then reload.');
+        }
+        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          throw new Error('No camera found on this device.');
+        }
+        if (name === 'NotReadableError' || name === 'TrackStartError') {
+          throw new Error('Camera is in use by another app. Close other camera apps and try again.');
+        }
+        if (name === 'SecurityError') {
+          throw new Error('Camera blocked by browser security policy. The page must be served over HTTPS.');
+        }
+        throw new Error(name + ': ' + (err.message || 'Could not access camera'));
+      }
+    }
+
+    async function startScan(mode) {
+      scanMode = mode;
+      document.getElementById('scanModeLabel').textContent =
+        mode === 'teacher' ? 'Scanning Teacher ID' : 'Scanning Document';
+      document.getElementById('scanControls').classList.add('hidden');
+      document.getElementById('scannerArea').classList.remove('hidden');
+      showStatus('Requesting camera…', 'info');
+
+      try {
+        await ensureCameraPermission();
+      } catch (err) {
+        showStatus(err.message, 'error');
+        document.getElementById('scanControls').classList.remove('hidden');
+        document.getElementById('scannerArea').classList.add('hidden');
+        return;
+      }
+
+      const qrboxFn = (vw, vh) => {
+        const minEdge = Math.min(vw, vh);
+        const size = Math.max(180, Math.floor(minEdge * 0.75));
+        return { width: size, height: size };
+      };
+
+      scanner = new Html5Qrcode('reader', { verbose: false });
+      try {
+        await scanner.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: qrboxFn, aspectRatio: 1.7777 },
+          onScanSuccess,
+          () => {} // ignore per-frame decode errors
+        );
+        showStatus('Point the camera at the QR code', 'info');
+      } catch (err) {
+        showStatus('Failed to start scanner: ' + (err.message || err), 'error');
+        stopScan();
+      }
+    }
+
+    function stopScan() {
+      const s = scanner;
+      scanner = null;
+      if (s) {
+        s.stop().then(() => { try { s.clear(); } catch (e) {} }).catch(() => {});
+      }
+      document.getElementById('scanControls').classList.remove('hidden');
+      document.getElementById('scannerArea').classList.add('hidden');
+    }
+
+    async function onScanSuccess(decodedText) {
+      const mode = scanMode;
+      const value = (decodedText || '').trim();
+      stopScan();
+      if (!value) return;
+
+      if (mode === 'teacher') {
+        currentTeacher = value;
+        docs = [];
+        updateTeacherUI();
+        showStatus('Loading teacher…', 'info');
+        try {
+          const res = await api('getTeacherDocs', {
+            username: creds.u, password: creds.p, teacherId: value
+          });
+          docs = res.docs || [];
+          updateDocsUI();
+          const msg = docs.length
+            ? 'Teacher loaded: ' + value + ' (' + docs.length + ' previous doc' + (docs.length === 1 ? '' : 's') + ')'
+            : 'Teacher loaded: ' + value;
+          showStatus(msg, 'success');
+        } catch (err) {
+          showStatus(err.message || err, 'error');
+        }
+      } else if (mode === 'doc') {
+        if (!currentTeacher) return;
+        showStatus('Saving…', 'info');
+        try {
+          const res = await api('logScan', {
+            username: creds.u, password: creds.p,
+            teacherId: currentTeacher, documentId: value
+          });
+          if (res.status === 'duplicate') {
+            showStatus('Already recorded: ' + value, 'warn');
+          } else {
+            docs.push(value);
+            updateDocsUI();
+            showStatus('Added: ' + value, 'success');
+          }
+        } catch (err) {
+          showStatus(err.message || err, 'error');
+        }
+      }
+    }
+
+    function updateTeacherUI() {
+      document.getElementById('teacherIdDisplay').textContent = currentTeacher || '— none —';
+      document.getElementById('scanDocBtn').disabled = !currentTeacher;
+      document.getElementById('docsCard').classList.toggle('hidden', !currentTeacher);
+    }
+
+    function updateDocsUI() {
+      const list = document.getElementById('docsList');
+      list.innerHTML = '';
+      docs.forEach(d => {
+        const li = document.createElement('li');
+        li.textContent = d;
+        list.appendChild(li);
+      });
+      document.getElementById('docCount').textContent =
+        docs.length ? (docs.length + ' document' + (docs.length === 1 ? '' : 's') + ' scanned') : 'No documents yet';
+    }
+
+    function resetTeacher() {
+      currentTeacher = null;
+      docs = [];
+      updateTeacherUI();
+      updateDocsUI();
+      showStatus('Ready for next teacher', 'info');
+    }
+
+    function showStatus(msg, type) {
+      const el = document.getElementById('status');
+      el.innerHTML = '<div class="status ' + type + '">' + msg + '</div>';
+      clearTimeout(showStatus._t);
+      showStatus._t = setTimeout(() => { el.innerHTML = ''; }, 4000);
+    }
+  </script>
+</body>
+</html>
