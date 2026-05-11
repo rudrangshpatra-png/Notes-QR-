@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>QR Scanner</title>
 
-  <!-- Load html5-qrcode with CDN fallback. Tries unpkg first, falls back to
-       jsDelivr, and shows a visible error banner if both fail. -->
+  <!-- Load html5-qrcode with CDN fallback. -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
           onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';"></script>
 
@@ -58,9 +57,6 @@
     .value { font-size: 18px; font-weight: 600; word-break: break-all; }
     .small { font-size: 13px; color: #5f6368; margin-top: 6px; }
 
-    /* Reader container needs explicit height so the injected video element
-       has somewhere to render. Without this, the container can be 0px tall
-       and the video never appears. */
     #reader {
       width: 100%;
       min-height: 320px;
@@ -124,7 +120,6 @@
 <body>
   <div class="container">
 
-    <!-- Library-load failure banner. Shown only if BOTH CDNs fail. -->
     <div id="libErr" class="lib-error hidden">
       QR scanner library failed to load. Check your internet connection and reload.
     </div>
@@ -161,14 +156,13 @@
 
       <div class="card">
         <div id="scanControls">
-          <button id="scanBtn" onclick="startScanAuto()">Scan Teacher ID</button>
-          <button class="secondary" onclick="resetTeacher()">Done — Next Teacher</button>
+          <button id="scanBtn" onclick="startContinuousScan()">Scan</button>
         </div>
 
         <div id="scannerArea" class="hidden">
-          <div class="label" id="scanModeLabel" style="margin-bottom:8px;"></div>
+          <div class="label" id="scanModeLabel" style="margin-bottom:8px;">Scanning…</div>
           <div id="reader"></div>
-          <button class="danger" style="margin-top:10px;" onclick="stopScan()">Cancel</button>
+          <button class="danger" style="margin-top:10px;" onclick="stopScan()">Stop</button>
         </div>
       </div>
 
@@ -185,7 +179,6 @@
   </div>
 
   <script>
-    // Detect if html5-qrcode failed to load from both CDNs and surface a banner.
     if (typeof Html5Qrcode === 'undefined') {
       window.addEventListener('load', () => {
         if (typeof Html5Qrcode === 'undefined') {
@@ -203,37 +196,33 @@
     const API_URL = 'https://script.google.com/macros/s/AKfycbzX6gPKNjbKyL_wjHBtjLU9D2wl6KtxYZPPy16MObY6AzlQS4109FYdemU0lW81lzSN/exec';
     // ============================================================
 
-    // Teacher IDs start with "HYT" followed by digits, optional hyphens, and
-    // optional letters (e.g. HYT18-156, HYT2025-A12). Adjust this regex if
-    // your IDs follow a different format.
+    // Teacher IDs are exactly three digits (e.g. 123, 001, 999).
+    // Anything else is treated as a document.
     const TEACHER_ID_PATTERN = /^\d{3}$/;
     function isTeacherId(value) {
       return TEACHER_ID_PATTERN.test(String(value).trim());
     }
 
+    // Cooldown between accepted scans (ms). Prevents the same QR sitting in
+    // frame from being processed repeatedly.
+    const SCAN_COOLDOWN_MS = 1500;
+
     let scanner = null;
-    let scanMode = null;
     let currentTeacher = null;
     let docs = [];
     let creds = { u: null, p: null };
+    let scanLocked = false;
     let videoWatchdog = null;
 
-    // Show config banner if API_URL hasn't been set
     if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
       document.getElementById('configBanner').classList.remove('hidden');
     }
 
-    // Restore session
     try {
       const saved = sessionStorage.getItem('creds');
       if (saved) { creds = JSON.parse(saved); showMain(); }
     } catch (e) {}
 
-    /**
-     * POSTs JSON to the Apps Script /exec URL.
-     * Uses Content-Type: text/plain to skip CORS preflight (which Apps Script
-     * cannot handle). The body is still JSON-stringified.
-     */
     async function api(action, payload) {
       if (!API_URL || API_URL === 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE') {
         throw new Error('API_URL is not configured in index.html');
@@ -284,39 +273,32 @@
       document.getElementById('mainScreen').classList.remove('hidden');
     }
 
-    /**
-     * Single Scan button. If no teacher is loaded, the next scan becomes the
-     * teacher. Once a teacher is loaded, every scan is treated as a document.
-     */
-    function startScanAuto() {
-      startScan(currentTeacher ? 'doc' : 'teacher');
+    function updateScanModeLabel() {
+      const el = document.getElementById('scanModeLabel');
+      el.textContent = currentTeacher
+        ? 'Scanning documents for teacher ' + currentTeacher
+        : 'Scan a teacher ID to begin';
     }
 
-    async function startScan(mode) {
-      // Safety check — if the library didn't load, fail clearly instead of crashing.
+    async function startContinuousScan() {
       if (typeof Html5Qrcode === 'undefined') {
         showStatus('Scanner library failed to load. Check your internet connection and reload the page.', 'error');
         return;
       }
 
-      scanMode = mode;
-      document.getElementById('scanModeLabel').textContent =
-        mode === 'teacher' ? 'Scanning Teacher ID' : 'Scanning Document';
       document.getElementById('scanControls').classList.add('hidden');
       document.getElementById('scannerArea').classList.remove('hidden');
+      updateScanModeLabel();
       showStatus('Starting camera…', 'info');
 
-      // Clear any previous content in #reader
       document.getElementById('reader').innerHTML = '';
 
-      // Watchdog: catches three failure modes — no video element, video element
-      // stuck loading, or video element with 0x0 frames.
       videoWatchdog = setTimeout(() => {
         const vid = document.querySelector('#reader video');
         if (!vid) {
-          showStatus('No video element. Try Cancel and Scan again, or check Chrome site settings.', 'error');
+          showStatus('No video element. Try Stop and Scan again, or check Chrome site settings.', 'error');
         } else if (vid.readyState < 2) {
-          showStatus('Camera connected but no video frames. The camera may be in use by another app (Zoom, Teams, OBS). Close it and try again.', 'warn');
+          showStatus('Camera connected but no video frames. The camera may be in use by another app.', 'warn');
         } else if (vid.videoWidth === 0 || vid.videoHeight === 0) {
           showStatus('Camera connected but producing 0×0 frames. Try a different camera or restart the browser.', 'warn');
         }
@@ -325,19 +307,14 @@
       scanner = new Html5Qrcode('reader', { verbose: false });
 
       try {
-        // Enumerate cameras and pick one with a real label, falling back to
-        // facingMode only if enumeration finds nothing useful. This handles
-        // the laptop case where facingMode often picks a virtual camera.
         let cameraConfig = { facingMode: { ideal: 'environment' } };
         try {
           const cams = await Html5Qrcode.getCameras();
           if (cams && cams.length > 0) {
-            // Prefer back-facing camera by label, else first non-virtual camera
             const back = cams.find(c => /back|rear|environment/i.test(c.label));
             const real = cams.find(c => c.label && !/obs|virtual|snap|nvidia|broadcast/i.test(c.label));
             const chosen = back || real || cams[0];
             cameraConfig = chosen.id;
-            console.log('Available cameras:', cams.map(c => c.label));
             console.log('Using camera:', chosen.label);
           }
         } catch (e) {
@@ -351,7 +328,6 @@
           () => {} // ignore per-frame decode errors
         );
 
-        // Force the video element visible in case any CSS is overriding it
         const vid = document.querySelector('#reader video');
         if (vid) {
           vid.setAttribute('playsinline', 'true');
@@ -359,9 +335,11 @@
           vid.muted = true;
           vid.style.display = 'block';
           vid.style.width = '100%';
-          try { await vid.play(); } catch (e) { /* autoplay should already be on */ }
+          try { await vid.play(); } catch (e) {}
         }
-        showStatus('Point the camera at the QR code', 'info');
+        showStatus(currentTeacher
+          ? 'Ready to scan documents for ' + currentTeacher
+          : 'Ready — scan a teacher ID first', 'info');
       } catch (err) {
         clearTimeout(videoWatchdog);
         showStatus('Failed to start scanner: ' + (err.message || err), 'error');
@@ -373,6 +351,7 @@
       clearTimeout(videoWatchdog);
       const s = scanner;
       scanner = null;
+      scanLocked = false;
       if (s) {
         s.stop().then(() => { try { s.clear(); } catch (e) {} }).catch(() => {});
       }
@@ -381,43 +360,51 @@
       document.getElementById('scannerArea').classList.add('hidden');
     }
 
+    /**
+     * Called on every successful QR decode. Auto-classifies the scan as
+     * teacher or document based on the pattern, with a cooldown to prevent
+     * the same code being processed repeatedly.
+     */
     async function onScanSuccess(decodedText) {
-      const mode = scanMode;
+      if (scanLocked) return; // in cooldown
       const value = (decodedText || '').trim();
-      stopScan();
       if (!value) return;
 
-      // Validate: teacher IDs must match the pattern; document IDs must NOT.
-      if (mode === 'teacher' && !isTeacherId(value)) {
-        showStatus('"' + value + '" is not a teacher ID. Teacher IDs start with HYT.', 'error');
-        return;
-      }
-      if (mode === 'doc' && isTeacherId(value)) {
-        showStatus('"' + value + '" looks like a teacher ID, not a document. Tap "Done — Next Teacher" first.', 'error');
-        return;
-      }
+      // Start cooldown immediately so repeated frames of the same QR are ignored
+      scanLocked = true;
+      setTimeout(() => { scanLocked = false; }, SCAN_COOLDOWN_MS);
 
-      if (mode === 'teacher') {
-        currentTeacher = value;
-        docs = [];
-        updateTeacherUI();
-        showStatus('Loading teacher…', 'info');
+      if (isTeacherId(value)) {
+        // Same teacher rescanned — no-op with a friendly message
+        if (currentTeacher === value) {
+          showStatus('Teacher ' + value + ' is already loaded', 'info');
+          return;
+        }
+        // Switch to (or load) this teacher
+        showStatus('Loading teacher ' + value + '…', 'info');
         try {
-          const res = await api('getTeacherDocs', {
+          const res = await api('loadTeacher', {
             username: creds.u, password: creds.p, teacherId: value
           });
+          currentTeacher = value;
           docs = res.docs || [];
+          updateTeacherUI();
           updateDocsUI();
-          const msg = docs.length
-            ? 'Teacher loaded: ' + value + ' (' + docs.length + ' previous doc' + (docs.length === 1 ? '' : 's') + ')'
-            : 'Teacher loaded: ' + value;
+          updateScanModeLabel();
+          const msg = res.created
+            ? 'New teacher: ' + value
+            : 'Teacher ' + value + ' loaded (' + docs.length + ' previous doc' + (docs.length === 1 ? '' : 's') + ')';
           showStatus(msg, 'success');
         } catch (err) {
           showStatus(err.message || err, 'error');
         }
-      } else if (mode === 'doc') {
-        if (!currentTeacher) return;
-        showStatus('Saving…', 'info');
+      } else {
+        // Document scan
+        if (!currentTeacher) {
+          showStatus('Scan a teacher ID first', 'error');
+          return;
+        }
+        showStatus('Saving ' + value + '…', 'info');
         try {
           const res = await api('logScan', {
             username: creds.u, password: creds.p,
@@ -438,8 +425,6 @@
 
     function updateTeacherUI() {
       document.getElementById('teacherIdDisplay').textContent = currentTeacher || '— none —';
-      // Single button — label switches based on whether a teacher is loaded
-      document.getElementById('scanBtn').textContent = currentTeacher ? 'Scan Document' : 'Scan Teacher ID';
       document.getElementById('docsCard').classList.toggle('hidden', !currentTeacher);
     }
 
@@ -455,19 +440,11 @@
         docs.length ? (docs.length + ' document' + (docs.length === 1 ? '' : 's') + ' scanned') : 'No documents yet';
     }
 
-    function resetTeacher() {
-      currentTeacher = null;
-      docs = [];
-      updateTeacherUI();
-      updateDocsUI();
-      showStatus('Ready for next teacher', 'info');
-    }
-
     function showStatus(msg, type) {
       const el = document.getElementById('status');
       el.innerHTML = '<div class="status ' + type + '">' + msg + '</div>';
       clearTimeout(showStatus._t);
-      showStatus._t = setTimeout(() => { el.innerHTML = ''; }, 5000);
+      showStatus._t = setTimeout(() => { el.innerHTML = ''; }, 4000);
     }
   </script>
 </body>
