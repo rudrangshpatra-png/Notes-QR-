@@ -321,7 +321,7 @@
           console.warn('Camera enumeration failed, falling back to facingMode:', e);
         }
 
-        await scanner.start(
+       await scanner.start(
           cameraConfig,
           { fps: 10, qrbox: 250 },
           onScanSuccess,
@@ -336,6 +336,31 @@
           vid.style.display = 'block';
           vid.style.width = '100%';
           try { await vid.play(); } catch (e) {}
+        }
+
+        // Apply zoom and continuous-autofocus if the camera supports them.
+        // Helps a lot with small QR codes that the wide-angle lens can't focus on.
+        try {
+          const stream = vid && vid.srcObject;
+          const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+          if (track && track.getCapabilities) {
+            const caps = track.getCapabilities();
+            const advanced = [];
+            if (caps.zoom) {
+              // Aim for 2x or whatever the camera can manage between min and max
+              const target = Math.min(Math.max(2, caps.zoom.min || 1), caps.zoom.max || 2);
+              advanced.push({ zoom: target });
+              console.log('Camera zoom range:', caps.zoom, '→ applying', target);
+            }
+            if (caps.focusMode && caps.focusMode.indexOf('continuous') !== -1) {
+              advanced.push({ focusMode: 'continuous' });
+            }
+            if (advanced.length > 0) {
+              await track.applyConstraints({ advanced: advanced });
+            }
+          }
+        } catch (e) {
+          console.warn('Could not apply zoom/focus settings:', e);
         }
         showStatus(currentTeacher
           ? 'Ready to scan documents for ' + currentTeacher
